@@ -15,6 +15,9 @@ from flask_login import (
 from oauthlib.oauth2 import WebApplicationClient
 import requests
 from http import HTTPStatus
+from enum import Enum, auto
+from dataclasses import dataclass
+from typing import Optional
 
 # Internal imports
 from db import init_db_command
@@ -64,113 +67,113 @@ def index():
         if current_user.is_authenticated:
             return (
                 "<p>Hello, {}! You're logged in! Email: {}</p>"
-                "<div><p>Google Profile Picture:</p>"
-                '<img src="{}" alt="Google profile pic"></img></div>'
+                "<div><p>Profile Picture:</p>"
+                '<img src="{}" alt="Profile pic"></img></div>'
                 '<a class="button" href="/logout">Logout</a>'.format(
                     current_user.name, current_user.email, current_user.profile_pic
                 )
             )
         else:
-            return '<a class="button" href="/login">Google Login</a>', HTTPStatus.OK
+            return (
+                '<a class="button" href="/login/google">Google Login</a>'
+                '<a class="button" href="/login/facebook">Facebook Login</a>'
+                '<a class="button" href="/login/apple">Apple Login</a>'
+                '<a class="button" href="/login/email">Email Login</a>'
+            ), HTTPStatus.OK
     except Exception as e:
         print(f"Index page error: {e}")
         return "Failed to load page.", HTTPStatus.INTERNAL_SERVER_ERROR
 
-def get_google_provider_cfg():
+def get_provider_cfg(provider: AuthProvider) -> Optional[dict]:
+    """Fetch provider configuration with caching."""
+    if provider == AuthProvider.EMAIL:
+        return None
+        
     try:
         response = requests.get(
-            GOOGLE_DISCOVERY_URL, 
+            provider.discovery_url,
             timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
         )
         response.raise_for_status()
         return response.json()
     except (requests.RequestException, ValueError) as e:
-        print(f"Failed to fetch Google configuration: {e}")
+        print(f"Failed to fetch {provider.name} configuration: {e}")
         return None
 
-@app.route("/login")
-def login():
-    if not GOOGLE_CLIENT_ID:
-        return "Google Client ID not configured.", HTTPStatus.INTERNAL_SERVER_ERROR
+@app.route("/login/<provider>")
+def login(provider: str):
+    try:
+        auth_provider = AuthProvider[provider.upper()]
+    except KeyError:
+        return f"Unsupported authentication provider: {provider}", HTTPStatus.BAD_REQUEST
 
-    google_provider_cfg = get_google_provider_cfg()
-    if not google_provider_cfg:
-        return ("Failed to get Google provider configuration.", 
+    # Handle email/password login separately
+    if auth_provider == AuthProvider.EMAIL:
+        return redirect(url_for("email_login"))
+
+    # Get client credentials
+    client_id = os.environ.get(auth_provider.client_id_env_var)
+    if not client_id:
+        return f"{auth_provider.name} Client ID not configured.", HTTPStatus.INTERNAL_SERVER_ERROR
+
+    # Get provider configuration
+    provider_cfg = get_provider_cfg(auth_provider)
+    if not provider_cfg:
+        return (f"Failed to get {auth_provider.name} provider configuration.", 
                 HTTPStatus.SERVICE_UNAVAILABLE)
 
     try:
-        authorization_endpoint = google_provider_cfg["authorization_endpoint"]
+        authorization_endpoint = provider_cfg["authorization_endpoint"]
+        client = WebApplicationClient(client_id)
         request_uri = client.prepare_request_uri(
             authorization_endpoint,
             redirect_uri=request.base_url + "/callback",
-            scope=["openid", "email", "profile"],
+            scope=auth_provider.required_scopes,
         )
         return redirect(request_uri)
     except Exception as e:
         print(f"Login preparation failed: {e}")
         return "Failed to prepare login request.", HTTPStatus.INTERNAL_SERVER_ERROR
 
-@app.route("/login/callback")
-def callback():
-    # Get authorization code Google sent back to you
+@app.route("/login/<provider>/callback")
+def callback(provider: str):
+    try:
+        auth_provider = AuthProvider[provider.upper()]
+    except KeyError:
+        return f"Unsupported authentication provider: {provider}", HTTPStatus.BAD_REQUEST
+
     code = request.args.get("code")
+    if not code:
+        return "Authorization code not received.", HTTPStatus.BAD_REQUEST
 
-    # Find out what URL to hit to get tokens that allow you to ask for
-    # things on behalf of a user
-    google_provider_cfg = get_google_provider_cfg()
-    token_endpoint = google_provider_cfg["token_endpoint"]
+    try:
+        oauth_config = OAuthConfig(
+            client_id=os.environ.get(auth_provider.client_id_env_var),
+            client_secret=os.environ.get(auth_provider.client_secret_env_var),
+            provider=auth_provider
+        )
+        
+        user_info = get_oauth_user_info(code, oauth_config)
+        if not user_info:
+            return "Failed to get user info.", HTTPStatus.UNAUTHORIZED
 
-    # Prepare and send a request to get tokens! Yay tokens!
-    token_url, headers, body = client.prepare_token_request(
-        token_endpoint,
-        authorization_response=request.url,
-        redirect_url=request.base_url,
-        code=code
-    )
-    token_response = requests.post(
-        token_url,
-        headers=headers,
-        data=body,
-        auth=(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET),
-    )
+        # Create/update user in database
+        user = User(
+            id_=user_info["sub"],
+            name=user_info["given_name"],
+            email=user_info["email"],
+            profile_pic=user_info.get("picture")
+        )
 
-    # Parse the tokens!
-    client.parse_request_body_response(json.dumps(token_response.json()))
+        if not User.get(user.id_):
+            User.create(user.id_, user.name, user.email, user.profile_pic)
 
-    # Now that you have tokens (yay) let's find and hit the URL
-    # from Google that gives you the user's profile information,
-    # including their Google profile image and email
-    userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
-    uri, headers, body = client.add_token(userinfo_endpoint)
-    userinfo_response = requests.get(uri, headers=headers, data=body)
+        login_user(user)
+        return redirect(url_for("index"))
 
-    # You want to make sure their email is verified.
-    # The user authenticated with Google, authorized your
-    # app, and now you've verified their email through Google!
-    if userinfo_response.json().get("email_verified"):
-        unique_id = userinfo_response.json()["sub"]
-        users_email = userinfo_response.json()["email"]
-        picture = userinfo_response.json()["picture"]
-        users_name = userinfo_response.json()["given_name"]
-    else:
-        return ("User email not available or not verified by Google.", 
-                HTTPStatus.BAD_REQUEST)
-
-    # Create a user in your db with the information provided
-    # by Google
-    user = User(
-        id_=unique_id, name=users_name, email=users_email, profile_pic=picture
-    )
-
-    # Doesn't exist? Add it to the database.
-    if not User.get(unique_id):
-        User.create(unique_id, users_name, users_email, picture)
-
-    # Begin user session by logging the user in
-    login_user(user)
-
-    # Send user back to homepage
-    return redirect(url_for("index"))
+    except Exception as e:
+        print(f"Callback failed: {e}")
+        return "Authentication failed.", HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.route("/logout")
 @login_required
@@ -196,6 +199,45 @@ def validate_config():
             f"Missing required environment variables: {', '.join(missing_configs)}\n"
             "Please set these variables before starting the application."
         )
+
+def get_oauth_user_info(code: str, config: OAuthConfig) -> Optional[dict]:
+    """Get user info from OAuth provider."""
+    provider_cfg = get_provider_cfg(config.provider)
+    if not provider_cfg:
+        return None
+
+    client = WebApplicationClient(config.client_id)
+    
+    # Get tokens
+    token_endpoint = provider_cfg["token_endpoint"]
+    token_url, headers, body = client.prepare_token_request(
+        token_endpoint,
+        authorization_response=request.url,
+        redirect_url=request.base_url,
+        code=code
+    )
+    
+    token_response = requests.post(
+        token_url,
+        headers=headers,
+        data=body,
+        auth=(config.client_id, config.client_secret),
+    )
+
+    if not token_response.ok:
+        return None
+
+    client.parse_request_body_response(json.dumps(token_response.json()))
+
+    # Get user info
+    userinfo_endpoint = provider_cfg["userinfo_endpoint"]
+    uri, headers, body = client.add_token(userinfo_endpoint)
+    userinfo_response = requests.get(uri, headers=headers, data=body)
+
+    if not userinfo_response.ok:
+        return None
+
+    return userinfo_response.json()
 
 # Add this before the app.run
 if __name__ == "__main__":
