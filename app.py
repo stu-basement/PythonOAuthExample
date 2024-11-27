@@ -37,6 +37,51 @@ GOOGLE_DISCOVERY_URL = (
     "https://accounts.google.com/.well-known/openid-configuration"
 )
 
+from enum import Enum, auto
+from dataclasses import dataclass
+from typing import Optional
+
+class AuthProvider(Enum):
+    GOOGLE = auto()
+    FACEBOOK = auto()
+    APPLE = auto()
+    EMAIL = auto()
+
+    @property
+    def discovery_url(self) -> Optional[str]:
+        urls = {
+            AuthProvider.GOOGLE: "https://accounts.google.com/.well-known/openid-configuration",
+            AuthProvider.FACEBOOK: "https://www.facebook.com/.well-known/openid-configuration",
+            AuthProvider.APPLE: "https://appleid.apple.com/.well-known/openid-configuration",
+            AuthProvider.EMAIL: None
+        }
+        return urls[self]
+    
+    @property
+    def client_id_env_var(self) -> str:
+        """Environment variable name for client ID."""
+        return f"{self.name}_CLIENT_ID"
+    
+    @property
+    def client_secret_env_var(self) -> str:
+        """Environment variable name for client secret."""
+        return f"{self.name}_CLIENT_SECRET"
+    
+    def required_scopes(self) -> list[str]:
+        """Get the required OAuth scopes for the provider."""
+        scopes = {
+            AuthProvider.GOOGLE: ["openid", "email", "profile"],
+            AuthProvider.FACEBOOK: ["email", "public_profile"],
+            AuthProvider.APPLE: ["name", "email"],
+            AuthProvider.EMAIL: []
+        }
+        return scopes[self]
+
+@dataclass
+class OAuthConfig:
+    client_id: str
+    client_secret: str
+    provider: AuthProvider
 # Flask app setup
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(SECRET_KEY_BYTES)
@@ -68,7 +113,7 @@ def index():
             return (
                 "<p>Hello, {}! You're logged in! Email: {}</p>"
                 "<div><p>Profile Picture:</p>"
-                '<img src="{}" alt="Profile pic"></img></div>'
+                '<img src="{}" alt="profile pic"></img></div>'
                 '<a class="button" href="/logout">Logout</a>'.format(
                     current_user.name, current_user.email, current_user.profile_pic
                 )
@@ -128,7 +173,7 @@ def login(provider: str):
         request_uri = client.prepare_request_uri(
             authorization_endpoint,
             redirect_uri=request.base_url + "/callback",
-            scope=auth_provider.required_scopes,
+            scope=auth_provider.required_scopes(),
         )
         return redirect(request_uri)
     except Exception as e:
@@ -165,8 +210,8 @@ def callback(provider: str):
             profile_pic=user_info.get("picture")
         )
 
-        if not User.get(user.id_):
-            User.create(user.id_, user.name, user.email, user.profile_pic)
+        if not User.get(user.id):
+            User.create(user.id, user.name, user.email, user.profile_pic)
 
         login_user(user)
         return redirect(url_for("index"))
