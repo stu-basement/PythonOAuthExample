@@ -158,7 +158,24 @@ def logout():
     logout_user()
     return redirect(url_for("index"))
 
+# Configuration validation at startup
+def validate_config():
+    missing_configs = []
+    
+    if not GOOGLE_CLIENT_ID:
+        missing_configs.append("GOOGLE_CLIENT_ID")
+    if not GOOGLE_CLIENT_SECRET:
+        missing_configs.append("GOOGLE_CLIENT_SECRET")
+    
+    if missing_configs:
+        raise RuntimeError(
+            f"Missing required environment variables: {', '.join(missing_configs)}\n"
+            "Please set these variables before starting the application."
+        )
+
+# Add this before the app.run
 if __name__ == "__main__":
+    validate_config()
     app.run(ssl_context="adhoc")
 
 
