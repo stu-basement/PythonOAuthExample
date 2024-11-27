@@ -14,6 +14,7 @@ from flask_login import (
 )
 from oauthlib.oauth2 import WebApplicationClient
 import requests
+from http import HTTPStatus
 
 # Internal imports
 from db import init_db_command
@@ -69,18 +70,25 @@ def get_google_provider_cfg():
 
 @app.route("/login")
 def login():
-    # Find out what URL to hit for Google login
-    google_provider_cfg = get_google_provider_cfg()
-    authorization_endpoint = google_provider_cfg["authorization_endpoint"]
+    if not GOOGLE_CLIENT_ID:
+        return "Google Client ID not configured.", HTTPStatus.INTERNAL_SERVER_ERROR
 
-    # Use library to construct the request for Google login and provide
-    # scopes that let you retrieve user's profile from Google
-    request_uri = client.prepare_request_uri(
-        authorization_endpoint,
-        redirect_uri=request.base_url + "/callback",
-        scope=["openid", "email", "profile"],
-    )
-    return redirect(request_uri)
+    google_provider_cfg = get_google_provider_cfg()
+    if not google_provider_cfg:
+        return ("Failed to get Google provider configuration.", 
+                HTTPStatus.SERVICE_UNAVAILABLE)
+
+    try:
+        authorization_endpoint = google_provider_cfg["authorization_endpoint"]
+        request_uri = client.prepare_request_uri(
+            authorization_endpoint,
+            redirect_uri=request.base_url + "/callback",
+            scope=["openid", "email", "profile"],
+        )
+        return redirect(request_uri)
+    except Exception as e:
+        print(f"Login preparation failed: {e}")
+        return "Failed to prepare login request.", HTTPStatus.INTERNAL_SERVER_ERROR
 
 @app.route("/login/callback")
 def callback():
@@ -125,7 +133,8 @@ def callback():
         picture = userinfo_response.json()["picture"]
         users_name = userinfo_response.json()["given_name"]
     else:
-        return "User email not available or not verified by Google.", 400
+        return ("User email not available or not verified by Google.", 
+                HTTPStatus.BAD_REQUEST)
 
     # Create a user in your db with the information provided
     # by Google
