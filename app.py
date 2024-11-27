@@ -53,17 +53,21 @@ def load_user(user_id):
 
 @app.route("/")
 def index():
-    if current_user.is_authenticated:
-        return (
-            "<p>Hello, {}! You're logged in! Email: {}</p>"
-            "<div><p>Google Profile Picture:</p>"
-            '<img src="{}" alt="Google profile pic"></img></div>'
-            '<a class="button" href="/logout">Logout</a>'.format(
-                current_user.name, current_user.email, current_user.profile_pic
+    try:
+        if current_user.is_authenticated:
+            return (
+                "<p>Hello, {}! You're logged in! Email: {}</p>"
+                "<div><p>Google Profile Picture:</p>"
+                '<img src="{}" alt="Google profile pic"></img></div>'
+                '<a class="button" href="/logout">Logout</a>'.format(
+                    current_user.name, current_user.email, current_user.profile_pic
+                )
             )
-        )
-    else:
-        return '<a class="button" href="/login">Google Login</a>'
+        else:
+            return '<a class="button" href="/login">Google Login</a>', HTTPStatus.OK
+    except Exception as e:
+        print(f"Index page error: {e}")
+        return "Failed to load page.", HTTPStatus.INTERNAL_SERVER_ERROR
 
 def get_google_provider_cfg():
     return requests.get(GOOGLE_DISCOVERY_URL).json()
@@ -155,8 +159,12 @@ def callback():
 @app.route("/logout")
 @login_required
 def logout():
-    logout_user()
-    return redirect(url_for("index"))
+    try:
+        logout_user()
+        return redirect(url_for("index"))
+    except Exception as e:
+        print(f"Logout failed: {e}")
+        return "Logout failed.", HTTPStatus.INTERNAL_SERVER_ERROR
 
 # Configuration validation at startup
 def validate_config():
