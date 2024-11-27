@@ -20,6 +20,13 @@ from http import HTTPStatus
 from db import init_db_command
 from user import User
 
+# Configuration constants
+SECRET_KEY_BYTES = 24  # Number of random bytes for secure secret key
+DEFAULT_REQUEST_TIMEOUT = 5  # seconds
+PROVIDER_CONFIG_CACHE_SECONDS = 86400  # 24 hours in seconds
+DEFAULT_CONNECT_TIMEOUT = 3  # seconds
+DEFAULT_READ_TIMEOUT = 5  # seconds
+
 # Configuration
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
@@ -29,7 +36,7 @@ GOOGLE_DISCOVERY_URL = (
 
 # Flask app setup
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
+app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(SECRET_KEY_BYTES)
 
 # User session management setup
 # https://flask-login.readthedocs.io/en/latest
@@ -70,7 +77,16 @@ def index():
         return "Failed to load page.", HTTPStatus.INTERNAL_SERVER_ERROR
 
 def get_google_provider_cfg():
-    return requests.get(GOOGLE_DISCOVERY_URL).json()
+    try:
+        response = requests.get(
+            GOOGLE_DISCOVERY_URL, 
+            timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
+        )
+        response.raise_for_status()
+        return response.json()
+    except (requests.RequestException, ValueError) as e:
+        print(f"Failed to fetch Google configuration: {e}")
+        return None
 
 @app.route("/login")
 def login():
