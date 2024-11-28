@@ -31,10 +31,6 @@ PROVIDER_CONFIG_CACHE_SECONDS = 86400  # 24 hours in seconds
 DEFAULT_CONNECT_TIMEOUT = 3  # seconds
 DEFAULT_READ_TIMEOUT = 5  # seconds
 
-# Configuration
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
-
 from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Optional
