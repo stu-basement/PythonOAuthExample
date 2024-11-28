@@ -14,7 +14,7 @@ def get_db():
 
     return g.db
 
-def close_db(e=None):
+def close_db():
     db = g.pop("db", None)
 
     if db is not None:
@@ -37,8 +37,10 @@ def init_database(app=None):
     ''' Database initialization factory '''
     try:
         app.cli.add_command(init_db_command)
+        return True
     except Exception as e:
-        app.logger.error(f"Database initialization failed: {e}") if app else print(f"Database initialization failed: {e}")
+        if app:
+            app.logger.error(f"Database initialization failed: {e}")
+        else:
+            print(f"Database initialization failed: {e}")
         return False
-
-

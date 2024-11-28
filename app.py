@@ -1,9 +1,12 @@
 # Python standard libraries
 import json
 import os
-import sqlite3
 import logging
 
+from http import HTTPStatus
+from enum import Enum, auto
+from dataclasses import dataclass
+from typing import Optional
 # Third-party libraries
 from flask import Flask, redirect, request, url_for
 from flask_login import (
@@ -15,13 +18,8 @@ from flask_login import (
 )
 from oauthlib.oauth2 import WebApplicationClient
 import requests
-from http import HTTPStatus
-from enum import Enum, auto
-from dataclasses import dataclass
-from typing import Optional
 
 # Internal imports
-from db import init_database
 from user import User
 
 # Configuration constants
@@ -30,10 +28,6 @@ DEFAULT_REQUEST_TIMEOUT = 5  # seconds
 PROVIDER_CONFIG_CACHE_SECONDS = 86400  # 24 hours in seconds
 DEFAULT_CONNECT_TIMEOUT = 3  # seconds
 DEFAULT_READ_TIMEOUT = 5  # seconds
-
-from enum import Enum, auto
-from dataclasses import dataclass
-from typing import Optional
 
 class AuthProvider(Enum):
     GOOGLE = auto()
@@ -44,23 +38,26 @@ class AuthProvider(Enum):
     @property
     def discovery_url(self) -> Optional[str]:
         urls = {
-            AuthProvider.GOOGLE: "https://accounts.google.com/.well-known/openid-configuration",
-            AuthProvider.FACEBOOK: "https://www.facebook.com/.well-known/openid-configuration",
-            AuthProvider.APPLE: "https://appleid.apple.com/.well-known/openid-configuration",
+            AuthProvider.GOOGLE:
+            "https://accounts.google.com/.well-known/openid-configuration",
+            AuthProvider.FACEBOOK:
+            "https://www.facebook.com/.well-known/openid-configuration",
+            AuthProvider.APPLE:
+            "https://appleid.apple.com/.well-known/openid-configuration",
             AuthProvider.EMAIL: None
         }
         return urls[self]
-    
+
     @property
     def client_id_env_var(self) -> str:
         """Environment variable name for client ID."""
         return f"{self.name}_CLIENT_ID"
-    
+
     @property
     def client_secret_env_var(self) -> str:
         """Environment variable name for client secret."""
         return f"{self.name}_CLIENT_SECRET"
-    
+
     def required_scopes(self) -> list[str]:
         """Get the required OAuth scopes for the provider."""
         scopes = {
@@ -79,10 +76,10 @@ class OAuthConfig:
 
 def create_app(config=None):
     """Application factory function."""
-    
+
     # Create Flask app instance
     app = Flask(__name__)
-    
+
     # Configure logging
     logging.basicConfig(
         level=logging.INFO,
@@ -90,63 +87,60 @@ def create_app(config=None):
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     app.logger = logging.getLogger('auth')
-    
+
     # Set secret key first - this is required for sessions
     app.secret_key = os.environ.get('SECRET_KEY') or os.urandom(24)
-    
+
     # Set remaining configuration
     app.config.from_mapping(
         GOOGLE_CLIENT_ID=os.environ.get("GOOGLE_CLIENT_ID", None),
         GOOGLE_CLIENT_SECRET=os.environ.get("GOOGLE_CLIENT_SECRET", None),
     )
-    
+
     # Override with test config if provided
     if config:
         # Ensure secret_key isn't overridden unless explicitly provided
         if 'SECRET_KEY' in config:
             app.secret_key = config['SECRET_KEY']
         app.config.from_mapping(config)
-    
+
     # Initialize extensions
     login_manager = LoginManager()
     login_manager.init_app(app)
-    
+
     # Register user loader
     @login_manager.user_loader
     def load_user(user_id):
         return User.get(user_id)
-    
+
     # Register routes
     register_routes(app)
-    
+
     return app
 
-def register_routes(app):
-    """Register all routes with the app."""
-    # All your existing routes go here
+def register_index_route(app):
     @app.route("/")
     def index():
         try:
             if current_user.is_authenticated:
                 return (
-                    "<p>Hello, {}! You're logged in! Email: {}</p>"
-                    "<div><p>Profile Picture:</p>"
-                    '<img src="{}" alt="profile pic"></img></div>'
-                    '<a class="button" href="/logout">Logout</a>'.format(
-                        current_user.name, current_user.email, current_user.profile_pic
-                    )
-                )
-            else:
-                return (
-                    '<a class="button" href="/login/google">Google Login</a><br>'
-                    '<a class="button" href="/login/facebook">Facebook Login</a><br>'
-                    '<a class="button" href="/login/apple">Apple Login</a><br>'
-                    '<a class="button" href="/login/email">Email Login</a>'
+                    f"<p>Hello, {current_user.name}! You're logged in!"
+                    f"Email: {current_user.email}</p>"
+                    f"<div><p>Profile Picture:</p>"
+                    f'<img src="{current_user.profile_pic}" alt="profile pic"></img></div>'
+                    f'<a class="button" href="/logout">Logout</a>'
                 ), HTTPStatus.OK
+            return (
+                '<a class="button" href="/login/google">Google Login</a><br>'
+                '<a class="button" href="/login/facebook">Facebook Login</a><br>'
+                '<a class="button" href="/login/apple">Apple Login</a><br>'
+                '<a class="button" href="/login/email">Email Login</a>'
+            ), HTTPStatus.OK
         except Exception as e:
             print(f"Index page error: {e}")
             return "Failed to load page.", HTTPStatus.INTERNAL_SERVER_ERROR
 
+def register_login_route(app):
     @app.route("/login/<provider>")
     def login(provider: str):
         try:
@@ -156,7 +150,7 @@ def register_routes(app):
             return f"Unsupported authentication provider: {provider}", HTTPStatus.BAD_REQUEST
 
         if auth_provider == AuthProvider.EMAIL:
-            app.logger.info(f"Redirecting to email login")
+            app.logger.info("Redirecting to email login")
             return redirect(url_for("email_login"))
 
         client_id = app.config.get(f"{auth_provider.name}_CLIENT_ID")
@@ -180,9 +174,11 @@ def register_routes(app):
             app.logger.info(f"Initiating {auth_provider.name} login flow for user")
             return redirect(request_uri)
         except Exception as e:
-            app.logger.error(f"Login preparation failed for {auth_provider.name}: {str(e)}", exc_info=True)
+            app.logger.error(f"Login preparation failed for {auth_provider.name}: {str(e)}",
+                             exc_info=True)
             return "Failed to prepare login request.", HTTPStatus.INTERNAL_SERVER_ERROR
 
+def register_login_callback_route(app):
     @app.route("/login/<provider>/callback")
     def callback(provider: str):
         try:
@@ -202,7 +198,7 @@ def register_routes(app):
                 client_secret=os.environ.get(auth_provider.client_secret_env_var),
                 provider=auth_provider
             )
-            
+
             user_info = get_oauth_user_info(code, oauth_config)
             if not user_info:
                 app.logger.error(f"Failed to get user info from {auth_provider.name}")
@@ -230,6 +226,7 @@ def register_routes(app):
             app.logger.error(f"Authentication failed for {auth_provider.name}: {str(e)}", exc_info=True)
             return "Authentication failed.", HTTPStatus.INTERNAL_SERVER_ERROR
 
+def register_logout_route(app):
     @app.route("/logout")
     @login_required
     def logout():
@@ -242,80 +239,78 @@ def register_routes(app):
             app.logger.error(f"Logout failed: {str(e)}", exc_info=True)
             return "Logout failed.", HTTPStatus.INTERNAL_SERVER_ERROR
 
-    # Configuration validation at startup
-    def validate_config():
-        missing_configs = []
-        
-        if not GOOGLE_CLIENT_ID:
-            missing_configs.append("GOOGLE_CLIENT_ID")
-        if not GOOGLE_CLIENT_SECRET:
-            missing_configs.append("GOOGLE_CLIENT_SECRET")
-        
-        if missing_configs:
-            raise RuntimeError(
-                f"Missing required environment variables: {', '.join(missing_configs)}\n"
-                "Please set these variables before starting the application."
-            )
+def register_routes(app):
+    """Register all routes with the app."""
+    # All your existing routes go here
 
-    def get_oauth_user_info(code: str, config: OAuthConfig) -> Optional[dict]:
-        """Get user info from OAuth provider."""
-        provider_cfg = get_provider_cfg(config.provider)
-        if not provider_cfg:
-            return None
+    register_index_route(app)
+    register_login_route(app)
+    register_login_callback_route(app)
+    register_logout_route(app)
 
-        client = WebApplicationClient(config.client_id)
-        
-        # Get tokens
-        token_endpoint = provider_cfg["token_endpoint"]
-        token_url, headers, body = client.prepare_token_request(
-            token_endpoint,
-            authorization_response=request.url,
-            redirect_url=request.base_url,
-            code=code
+def get_oauth_user_info(code: str, config: OAuthConfig) -> Optional[dict]:
+    """Get user info from OAuth provider."""
+    provider_cfg = get_provider_cfg(config.provider)
+    if not provider_cfg:
+        return None
+
+    client = WebApplicationClient(config.client_id)
+
+    # Get tokens
+    token_endpoint = provider_cfg["token_endpoint"]
+    token_url, headers, body = client.prepare_token_request(
+        token_endpoint,
+        authorization_response=request.url,
+        redirect_url=request.base_url,
+        code=code
+    )
+
+    token_response = requests.post(
+        token_url,
+        headers=headers,
+        data=body,
+        auth=(config.client_id, config.client_secret),
+        timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
+    )
+
+    if not token_response.ok:
+        return None
+
+    client.parse_request_body_response(json.dumps(token_response.json()))
+
+    # Get user info
+    userinfo_endpoint = provider_cfg["userinfo_endpoint"]
+    uri, headers, body = client.add_token(userinfo_endpoint)
+    userinfo_response = requests.get(
+        uri,
+        headers=headers,
+        data=body,
+        timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT),
         )
-        
-        token_response = requests.post(
-            token_url,
-            headers=headers,
-            data=body,
-            auth=(config.client_id, config.client_secret),
+
+    if not userinfo_response.ok:
+        return None
+
+    return userinfo_response.json()
+
+def get_provider_cfg(provider: AuthProvider) -> Optional[dict]:
+    """Fetch provider configuration with caching."""
+    if provider == AuthProvider.EMAIL:
+        return None
+
+    try:
+        response = requests.get(
+            provider.discovery_url,
+            timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
         )
-
-        if not token_response.ok:
-            return None
-
-        client.parse_request_body_response(json.dumps(token_response.json()))
-
-        # Get user info
-        userinfo_endpoint = provider_cfg["userinfo_endpoint"]
-        uri, headers, body = client.add_token(userinfo_endpoint)
-        userinfo_response = requests.get(uri, headers=headers, data=body)
-
-        if not userinfo_response.ok:
-            return None
-
-        return userinfo_response.json()
-
-    def get_provider_cfg(provider: AuthProvider) -> Optional[dict]:
-        """Fetch provider configuration with caching."""
-        if provider == AuthProvider.EMAIL:
-            return None
-        
-        try:
-            response = requests.get(
-                provider.discovery_url,
-                timeout=(DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT)
-            )
-            response.raise_for_status()
-            return response.json()
-        except (requests.RequestException, ValueError) as e:
-            print(f"Failed to fetch {provider.name} configuration: {e}")
-            return None
+        response.raise_for_status()
+        return response.json()
+    except (requests.RequestException, ValueError) as e:
+        print(f"Failed to fetch {provider.name} configuration: {e}")
+        return None
 
 # Create the application
-app = create_app()
+ssoapp = create_app()
 
 if __name__ == "__main__":
-    app.run(ssl_context="adhoc")
-
-
+    ssoapp.run(ssl_context="adhoc")

@@ -1,65 +1,69 @@
+from unittest.mock import patch, Mock
+from http import HTTPStatus
+
 import os
 import pytest
-from unittest.mock import patch, Mock
-from flask import url_for
-from http import HTTPStatus
+
 from app import create_app, AuthProvider
 
-@pytest.fixture
-def app():
-    """Create application for the tests."""
-    # Allow OAuth without HTTPS in testing
-    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-    
-    app = create_app({
-        'TESTING': True,
-        'SECRET_KEY': 'test_secret_key',
-        'GOOGLE_CLIENT_ID': 'test_client_id',
-        'GOOGLE_CLIENT_SECRET': 'test_client_secret'
-    })
-    return app
-
-@pytest.fixture
-def client(app):
+@pytest.fixture(name="sso_client")
+def fixture_sso_client(sso_app):
     """Create test client."""
-    return app.test_client()
+    return sso_app.test_client()
 
-@pytest.fixture
-def mock_google_config():
+@pytest.fixture(name="mock_google_config")
+def fixture_mock_google_config():
     return {
         "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_endpoint": "https://oauth2.googleapis.com/token",
         "userinfo_endpoint": "https://openidconnect.googleapis.com/v2/userinfo"
     }
 
-def test_google_login_button_present(client):
+@pytest.fixture(name="sso_app")
+def fixture_sso_app():
+    """Create application for the tests."""
+    # Allow OAuth without HTTPS in testing
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
+    sso_app = create_app({
+        'TESTING': True,
+        'SECRET_KEY': 'test_secret_key',
+        'GOOGLE_CLIENT_ID': 'test_client_id',
+        'GOOGLE_CLIENT_SECRET': 'test_client_secret'
+    })
+    return sso_app
+
+def test_google_login_button_present(sso_client):
     """Test that Google login button appears on index page."""
-    response = client.get('/')
+    response = sso_client.get('/')
     assert response.status_code == HTTPStatus.OK
     assert b'href="/login/google"' in response.data
 
-def test_google_login_redirect(client, mock_google_config, app):
+def test_google_login_redirect(sso_client, mock_google_config):
     """Test that /login/google redirects to Google's auth endpoint."""
     with patch('requests.get') as mock_get:
         mock_get.return_value.json.return_value = mock_google_config
         mock_get.return_value.ok = True
-        
-        response = client.get('/login/google')
+
+        response = sso_client.get('/login/google')
         assert response.status_code == HTTPStatus.FOUND  # 302 redirect
         assert 'accounts.google.com' in response.headers['Location']
         assert 'openid' in response.headers['Location']
         assert 'email' in response.headers['Location']
         assert 'profile' in response.headers['Location']
 
-def test_google_login_missing_client_id(client, app):
+def test_google_login_missing_client_id(sso_client, sso_app):
     """Test handling of missing Google client ID."""
-    app.config['GOOGLE_CLIENT_ID'] = None
-    response = client.get('/login/google')
+    sso_app.config['GOOGLE_CLIENT_ID'] = None
+    response = sso_client.get('/login/google')
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert b'Client ID not configured' in response.data
 
-def test_google_callback_success(client):
+@patch('requests.get')
+@patch('requests.post')
+def test_google_callback_success(mock_post, mock_get, sso_client):
     """Test successful Google callback handling."""
+    # Mock user info response
     mock_user_info = {
         "sub": "12345",
         "given_name": "Test User",
@@ -67,52 +71,46 @@ def test_google_callback_success(client):
         "picture": "https://example.com/pic.jpg"
     }
 
-    with patch('requests.get') as mock_get, \
-         patch('requests.post') as mock_post, \
-         patch('app.User.get', return_value=None), \
+    # Mock the OAuth provider configuration
+    mock_provider_config = {
+        "token_endpoint": "https://oauth2.googleapis.com/token",
+        "userinfo_endpoint": "https://openidconnect.googleapis.com/v2/userinfo"
+    }
+
+    with patch('app.User.get', return_value=None), \
          patch('app.User.create') as mock_create, \
          patch('app.login_user') as mock_login:
-        
-        # Mock the OAuth provider configuration
-        mock_provider_config = {
-            "token_endpoint": "https://oauth2.googleapis.com/token",
-            "userinfo_endpoint": "https://openidconnect.googleapis.com/v2/userinfo"
-        }
 
-        # Set up the mock responses for different requests
-        def get_side_effect(*args, **kwargs):
-            mock_response = Mock()
-            
-            # Provider configuration endpoint
-            if '.well-known/openid-configuration' in args[0]:
-                mock_response.json.return_value = mock_provider_config
-                mock_response.ok = True
-            # User info endpoint
-            elif 'userinfo' in args[0]:
-                mock_response.json.return_value = mock_user_info
-                mock_response.ok = True
-            
-            mock_response.raise_for_status = Mock()
-            return mock_response
-        
-        mock_get.side_effect = get_side_effect
+        # Configure discovery endpoint response
+        discovery_response = Mock()
+        discovery_response.json = lambda: mock_provider_config
+        discovery_response.ok = True
 
-        # Mock the token exchange response
-        mock_token_response = Mock()
-        mock_token_response.json.return_value = {
+        # Configure userinfo endpoint response
+        userinfo_response = Mock()
+        userinfo_response.json = lambda: mock_user_info
+        userinfo_response.ok = True
+
+        # Configure token endpoint response
+        token_response = Mock()
+        token_response.json = lambda: {
             "access_token": "dummy_token",
             "id_token": "dummy_id_token",
             "token_type": "Bearer"
         }
-        mock_token_response.ok = True
-        mock_post.return_value = mock_token_response
-        
-        response = client.get('/login/google/callback?code=dummy_code')
-        
-        # Debug output
-        print(f"Response status: {response.status_code}")
-        print(f"Response data: {response.data}")
-        
+        token_response.ok = True
+        mock_post.return_value = token_response
+
+        # Configure the GET mock based on URL
+        def get_response(url):
+            if 'openid-configuration' in url:
+                return discovery_response
+            return userinfo_response
+
+        mock_get.side_effect = lambda url, **kwargs: get_response(url)
+
+        response = sso_client.get('/login/google/callback?code=dummy_code')
+
         assert response.status_code == HTTPStatus.FOUND  # 302 redirect
         assert mock_create.called
         mock_create.assert_called_with(
@@ -123,99 +121,102 @@ def test_google_callback_success(client):
         )
         assert mock_login.called
 
-def test_google_callback_missing_code(client):
+def test_google_callback_missing_code(sso_client):
     """Test callback handling when authorization code is missing."""
-    response = client.get('/login/google/callback')
+    response = sso_client.get('/login/google/callback')
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert b'Authorization code not received' in response.data
 
-def test_google_callback_invalid_provider(client):
+def test_google_callback_invalid_provider(sso_client):
     """Test callback with invalid provider."""
-    response = client.get('/login/invalid_provider/callback?code=dummy_code')
+    response = sso_client.get('/login/invalid_provider/callback?code=dummy_code')
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert b'Unsupported authentication provider' in response.data
 
 @patch('requests.get')
 @patch('requests.post')
-def test_google_callback_token_error(mock_post, mock_get, client):
+def test_google_callback_token_error(mock_post, mock_get, sso_client):
     """Test handling of token exchange error."""
     # Mock the OAuth provider configuration
     mock_provider_config = {
         "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_endpoint": "https://oauth2.googleapis.com/token",
-        "userinfo_endpoint": "https://openidconnect.googleapis.com/v2/userinfo"
     }
 
-    def get_side_effect(*args, **kwargs):
-        print(f"GET request to: {args[0]}")  # Debug print
-        mock_response = Mock()
-        if 'openid-configuration' in args[0]:
-            print("Returning provider config")  # Debug print
-            print(f"Config: {mock_provider_config}")  # Debug print
-            mock_response.json = lambda: mock_provider_config
-            mock_response.ok = True
-            mock_response.status_code = 200
-        else:
-            print(f"Unhandled GET request to: {args[0]}")  # Debug print
-        return mock_response
+    discovery_response = Mock()
+    discovery_response.json = lambda: mock_provider_config
+    discovery_response.ok = True
 
-    mock_get.side_effect = get_side_effect
+    token_response = Mock()
+    token_response.ok = False
+    token_response.status_code = HTTPStatus.UNAUTHORIZED
 
-    def post_side_effect(*args, **kwargs):
-        print(f"POST request to: {args[0]}")  # Debug print
-        print(f"POST data: {kwargs.get('data', '')}")  # Debug print
-        mock_response = Mock()
-        mock_response.ok = False
-        mock_response.status_code = 401
-        return mock_response
+    # Configure the GET mock based on URL
+    def get_response(url):
+        """Return appropriate mock response based on URL.
+        
+        Args:
+            url: The request URL
+            
+        Returns:
+            Mock: Configured mock response
+        """
+        if 'openid-configuration' in url:
+            return discovery_response
+        return token_response
 
-    mock_post.side_effect = post_side_effect
-    
-    response = client.get('/login/google/callback?code=dummy_code')
-    print(f"Response status: {response.status_code}")  # Debug print
-    print(f"Response data: {response.data}")  # Debug print
-    
+    mock_get.side_effect = lambda url, **kwargs: get_response(url)
+    mock_post.return_value = token_response
+
+    response = sso_client.get('/login/google/callback?code=dummy_code')
     assert response.status_code == HTTPStatus.UNAUTHORIZED
     assert b'Failed to get user info' in response.data
 
 @patch('requests.get')
 @patch('requests.post')
-def test_google_callback_userinfo_error(mock_post, mock_get, client):
+def test_google_callback_userinfo_error(mock_post, mock_get, sso_client):
     """Test handling of userinfo endpoint error."""
     # Mock the OAuth provider configuration
     mock_provider_config = {
         "token_endpoint": "https://oauth2.googleapis.com/token",
         "userinfo_endpoint": "https://openidconnect.googleapis.com/v2/userinfo"
     }
-    
-    def get_side_effect(*args, **kwargs):
-        mock_response = Mock()
-        if '.well-known/openid-configuration' in args[0]:
-            mock_response.json.return_value = mock_provider_config
-            mock_response.ok = True
-        else:
-            # Userinfo endpoint fails
-            mock_response.ok = False
-            mock_response.status_code = 401
-        return mock_response
-    
-    mock_get.side_effect = get_side_effect
 
-    # Mock successful token exchange
-    mock_post.return_value.json.return_value = {
+    # Configure discovery endpoint response
+    discovery_response = Mock()
+    discovery_response.json = lambda: mock_provider_config
+    discovery_response.ok = True
+
+    # Configure userinfo endpoint response
+    userinfo_response = Mock()
+    userinfo_response.ok = False
+    userinfo_response.status_code = 401
+
+    # Configure token endpoint response
+    token_response = Mock()
+    token_response.json = lambda: {
         "access_token": "dummy_token",
         "id_token": "dummy_id_token",
         "token_type": "Bearer"
     }
-    mock_post.return_value.ok = True
-    
-    response = client.get('/login/google/callback?code=dummy_code')
+    token_response.ok = True
+    mock_post.return_value = token_response
+
+    # Configure the GET mock based on URL
+    def get_response(url):
+        if 'openid-configuration' in url:
+            return discovery_response
+        return userinfo_response
+
+    mock_get.side_effect = lambda url, **kwargs: get_response(url)
+
+    response = sso_client.get('/login/google/callback?code=dummy_code')
     assert response.status_code == HTTPStatus.UNAUTHORIZED
     assert b'Failed to get user info' in response.data
 
 @patch('requests.get')
 @patch('requests.post')
-def test_google_callback_missing_email(mock_post, mock_get, client):
+def test_google_callback_missing_email(mock_post, mock_get, sso_client):
     """Test handling of userinfo response missing required fields."""
     # Mock the OAuth provider configuration
     mock_provider_config = {
@@ -224,7 +225,7 @@ def test_google_callback_missing_email(mock_post, mock_get, client):
         "userinfo_endpoint": "https://openidconnect.googleapis.com/v2/userinfo"
     }
 
-    def get_side_effect(*args, **kwargs):
+    def get_side_effect(*args):
         mock_response = Mock()
         if 'openid-configuration' in args[0]:
             # Provider configuration request
@@ -253,8 +254,8 @@ def test_google_callback_missing_email(mock_post, mock_get, client):
     mock_token_response.ok = True
     mock_token_response.raise_for_status = Mock()
     mock_post.return_value = mock_token_response
-    
-    response = client.get('/login/google/callback?code=dummy_code')
+
+    response = sso_client.get('/login/google/callback?code=dummy_code')
     assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR  # This is correct - we get 500 when user info is invalid
     assert b'Authentication failed' in response.data
 
@@ -265,7 +266,7 @@ def test_auth_provider_enum():
     assert "openid" in AuthProvider.GOOGLE.required_scopes()
     assert AuthProvider.GOOGLE.client_id_env_var == "GOOGLE_CLIENT_ID"
 
-def test_logout_without_login(client):
+def test_logout_without_login(sso_client):
     """Test logout when not logged in."""
-    response = client.get('/logout')
-    assert response.status_code == HTTPStatus.UNAUTHORIZED 
+    response = sso_client.get('/logout')
+    assert response.status_code == HTTPStatus.UNAUTHORIZED
