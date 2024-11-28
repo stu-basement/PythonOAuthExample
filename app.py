@@ -31,7 +31,7 @@ DEFAULT_READ_TIMEOUT = 5  # seconds
 
 class AuthProvider(Enum):
     GOOGLE = auto()
-    FACEBOOK = auto()
+    META = auto()
     APPLE = auto()
     EMAIL = auto()
 
@@ -40,7 +40,7 @@ class AuthProvider(Enum):
         urls = {
             AuthProvider.GOOGLE:
             "https://accounts.google.com/.well-known/openid-configuration",
-            AuthProvider.FACEBOOK:
+            AuthProvider.META:
             "https://www.facebook.com/.well-known/openid-configuration",
             AuthProvider.APPLE:
             "https://appleid.apple.com/.well-known/openid-configuration",
@@ -62,7 +62,7 @@ class AuthProvider(Enum):
         """Get the required OAuth scopes for the provider."""
         scopes = {
             AuthProvider.GOOGLE: ["openid", "email", "profile"],
-            AuthProvider.FACEBOOK: ["email", "public_profile"],
+            AuthProvider.META: ["email", "public_profile"],
             AuthProvider.APPLE: ["name", "email"],
             AuthProvider.EMAIL: []
         }
@@ -132,7 +132,7 @@ def register_index_route(app):
                 ), HTTPStatus.OK
             return (
                 '<a class="button" href="/login/google">Google Login</a><br>'
-                '<a class="button" href="/login/facebook">Facebook Login</a><br>'
+                '<a class="button" href="/login/meta">Meta Login</a><br>'
                 '<a class="button" href="/login/apple">Apple Login</a><br>'
                 '<a class="button" href="/login/email">Email Login</a>'
             ), HTTPStatus.OK
