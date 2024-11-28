@@ -33,7 +33,12 @@ def init_db_command():
     init_db()
     click.echo("Initialized the database.")
 
-def init_app(app):
-    app.teardown_appcontext(close_db)
-    app.cli.add_command(init_db_command)
+def init_database(app=None):
+    ''' Database initialization factory '''
+    try:
+        app.cli.add_command(init_db_command)
+    except Exception as e:
+        app.logger.error(f"Database initialization failed: {e}") if app else print(f"Database initialization failed: {e}")
+        return False
+
 

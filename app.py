@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 # Internal imports
-from db import init_db_command
+from db import init_database
 from user import User
 
 # Configuration constants
@@ -110,12 +110,6 @@ def create_app(config=None):
     # Initialize extensions
     login_manager = LoginManager()
     login_manager.init_app(app)
-    
-    # Initialize database
-    try:
-        init_db_command()
-    except Exception as e:
-        print(f"Database initialization failed: {e}")
     
     # Register user loader
     @login_manager.user_loader
