@@ -120,9 +120,9 @@ def index():
             )
         else:
             return (
-                '<a class="button" href="/login/google">Google Login</a>'
-                '<a class="button" href="/login/facebook">Facebook Login</a>'
-                '<a class="button" href="/login/apple">Apple Login</a>'
+                '<a class="button" href="/login/google">Google Login</a><br>'
+                '<a class="button" href="/login/facebook">Facebook Login</a><br>'
+                '<a class="button" href="/login/apple">Apple Login</a><br>'
                 '<a class="button" href="/login/email">Email Login</a>'
             ), HTTPStatus.OK
     except Exception as e:
