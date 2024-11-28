@@ -34,9 +34,6 @@ DEFAULT_READ_TIMEOUT = 5  # seconds
 # Configuration
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
-GOOGLE_DISCOVERY_URL = (
-    "https://accounts.google.com/.well-known/openid-configuration"
-)
 
 from enum import Enum, auto
 from dataclasses import dataclass
