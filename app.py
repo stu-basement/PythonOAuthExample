@@ -21,6 +21,7 @@ import requests
 
 # Internal imports
 from user import User
+from db import init_database
 
 # Configuration constants
 SECRET_KEY_BYTES = 24  # Number of random bytes for secure secret key
@@ -36,6 +37,15 @@ class AuthProvider(Enum):
     EMAIL = auto()
 
     @property
+    def provider_name(self) -> str:
+        """Get the provider name in lowercase.
+        
+        Returns:
+            str: Provider name in lowercase (e.g., 'google', 'facebook')
+        """
+        return self.name.upper()
+
+    @property
     def discovery_url(self) -> Optional[str]:
         urls = {
             AuthProvider.GOOGLE:
@@ -47,6 +57,28 @@ class AuthProvider(Enum):
             AuthProvider.EMAIL: None
         }
         return urls[self]
+
+    @property
+    def token_endpoint(self) -> Optional[str]:
+        ''' Get the token endpoint for the provider '''
+        endpoints = {
+            AuthProvider.GOOGLE: None, # Uses discovery
+            AuthProvider.META: "https://graph.facebook.com/v18.0/oauth/access_token",
+            AuthProvider.APPLE: None, # TBD
+            AuthProvider.EMAIL: None # TBD
+        }
+        return endpoints[self]
+
+    @property
+    def userinfo_endpoint(self) -> Optional[str]:
+        """Get the userinfo endpoint for the provider."""
+        endpoints = {
+            AuthProvider.GOOGLE: None,  # Uses discovery
+            AuthProvider.META: "https://graph.facebook.com/v18.0/me?fields=id,name,email,picture",
+            AuthProvider.APPLE: None,  # Uses discovery
+            AuthProvider.EMAIL: None
+        }
+        return endpoints[self]
 
     @property
     def client_id_env_var(self) -> str:
@@ -95,6 +127,8 @@ def create_app(config=None):
     app.config.from_mapping(
         GOOGLE_CLIENT_ID=os.environ.get("GOOGLE_CLIENT_ID", None),
         GOOGLE_CLIENT_SECRET=os.environ.get("GOOGLE_CLIENT_SECRET", None),
+        META_CLIENT_ID=os.environ.get("META_CLIENT_ID", None),
+        META_CLIENT_SECRET=os.environ.get("META_CLIENT_SECRET", None),
     )
 
     # Override with test config if provided
@@ -103,6 +137,9 @@ def create_app(config=None):
         if 'SECRET_KEY' in config:
             app.secret_key = config['SECRET_KEY']
         app.config.from_mapping(config)
+
+    # Initialize database
+    init_database(app)
 
     # Initialize extensions
     login_manager = LoginManager()
@@ -178,6 +215,36 @@ def register_login_route(app):
                              exc_info=True)
             return "Failed to prepare login request.", HTTPStatus.INTERNAL_SERVER_ERROR
 
+def map_oauth_user_info(provider: AuthProvider, user_info: dict) -> dict:
+    """Map provider-specific user info to standard format.
+    
+    Args:
+        provider: The authentication provider
+        user_info: Provider-specific user info
+        
+    Returns:
+        dict: Standardized user info with keys:
+            - id: Unique user identifier
+            - name: User's display name
+            - email: User's email
+            - picture: URL to profile picture
+    """
+    if provider == AuthProvider.GOOGLE:
+        return {
+            "id": user_info["sub"],
+            "name": user_info.get("given_name", user_info.get("name")),
+            "email": user_info["email"],
+            "picture": user_info.get("picture")
+        }
+    elif provider == AuthProvider.META:
+        return {
+            "id": user_info["id"],
+            "name": user_info.get("name"),
+            "email": user_info["email"],
+            "picture": user_info.get("picture", {}).get("data", {}).get("url")
+        }
+    return {}
+
 def register_login_callback_route(app):
     @app.route("/login/<provider>/callback")
     def callback(provider: str):
@@ -189,7 +256,7 @@ def register_login_callback_route(app):
 
         code = request.args.get("code")
         if not code:
-            app.logger.warning(f"No authorization code received in callback for {auth_provider.name}")
+            app.logger.warning(f"No authorization code received in callback for {auth_provider.provider_name}")
             return "Authorization code not received.", HTTPStatus.BAD_REQUEST
 
         try:
@@ -205,16 +272,18 @@ def register_login_callback_route(app):
                 return "Failed to get user info.", HTTPStatus.UNAUTHORIZED
 
             # Create/update user in database
+            mapped_info = map_oauth_user_info(auth_provider, user_info)
             user = User(
-                id_=user_info["sub"],
-                name=user_info.get("given_name", user_info.get("name")),
-                email=user_info["email"],
-                profile_pic=user_info.get("picture")
+                id_=mapped_info["id"],
+                provider=auth_provider.provider_name,
+                name=mapped_info.get("name"),
+                email=mapped_info["email"],
+                profile_pic=mapped_info.get("picture")
             )
 
             if not User.get(user.id):
-                app.logger.info(f"Creating new user account for {user.email}")
-                User.create(user.id, user.name, user.email, user.profile_pic)
+                app.logger.info(f"Creating new user account for {user.email} from {auth_provider.provider_name}")
+                User.create(user.id, user.provider, user.name, user.email, user.profile_pic)
             else:
                 app.logger.info(f"Existing user logged in: {user.email}")
 
@@ -296,7 +365,14 @@ def get_oauth_user_info(code: str, config: OAuthConfig) -> Optional[dict]:
 def get_provider_cfg(provider: AuthProvider) -> Optional[dict]:
     """Fetch provider configuration with caching."""
     if provider == AuthProvider.EMAIL:
-        return None
+        return None # TBD
+    
+    if provider == AuthProvider.META:
+        return {
+            "authorization_endpoint": "https://www.facebook.com/v18.0/dialog/oauth",
+            "token_endpoint": provider.token_endpoint,
+            "userinfo_endpoint": provider.userinfo_endpoint
+        }
 
     try:
         response = requests.get(

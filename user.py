@@ -3,8 +3,9 @@ from flask_login import UserMixin
 from db import get_db
 
 class User(UserMixin):
-    def __init__(self, id_, name, email, profile_pic):
+    def __init__(self, id_, provider, name, email, profile_pic):
         self.id = id_
+        self.provider = provider
         self.name = name
         self.email = email
         self.profile_pic = profile_pic
@@ -19,16 +20,16 @@ class User(UserMixin):
             return None
 
         user = User(
-            id_=user[0], name=user[1], email=user[2], profile_pic=user[3]
+            id_=user[0], provider=user[1], name=user[2], email=user[3], profile_pic=user[4]
         )
         return user
 
     @staticmethod
-    def create(id_, name, email, profile_pic):
+    def create(id_, provider, name, email, profile_pic):
         db = get_db()
         db.execute(
-            "INSERT INTO user (id, name, email, profile_pic) "
-            "VALUES (?, ?, ?, ?)",
-            (id_, name, email, profile_pic),
+            "INSERT INTO user (id, provider, name, email, profile_pic) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (id_, provider, name, email, profile_pic),
         )
         db.commit()

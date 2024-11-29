@@ -66,6 +66,7 @@ def test_google_callback_success(mock_post, mock_get, sso_client):
     # Mock user info response
     mock_user_info = {
         "sub": "12345",
+        "provider": "GOOGLE",
         "given_name": "Test User",
         "email": "test@example.com",
         "picture": "https://example.com/pic.jpg"
@@ -115,6 +116,7 @@ def test_google_callback_success(mock_post, mock_get, sso_client):
         assert mock_create.called
         mock_create.assert_called_with(
             mock_user_info["sub"],
+            "GOOGLE",
             mock_user_info["given_name"],
             mock_user_info["email"],
             mock_user_info["picture"]

@@ -37,6 +37,9 @@ def init_database(app=None):
     ''' Database initialization factory '''
     try:
         app.cli.add_command(init_db_command)
+        with app.app_context():
+            init_db()
+        app.logger.info("Database initialized")
         return True
     except Exception as e:
         if app:
