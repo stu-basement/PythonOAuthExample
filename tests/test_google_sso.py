@@ -1,3 +1,4 @@
+''' Test Google OAuth functionality '''
 from unittest.mock import patch, Mock, ANY
 from http import HTTPStatus
 
@@ -14,6 +15,7 @@ def fixture_sso_client(sso_app):
 
 @pytest.fixture(name="mock_google_config")
 def fixture_mock_google_config():
+    '''Create mock Google OAuth configuration.'''
     return {
         "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_endpoint": "https://oauth2.googleapis.com/token",
@@ -373,7 +375,7 @@ def test_multiple_logins_same_user(mock_post, mock_get, sso_client):
     mock_existing_user.provider = "GOOGLE"
 
     with patch('app.User.get', return_value=mock_existing_user), \
-         patch('app.User.create') as mock_create:
+         patch('app.User.create'):
 
         # Configure responses
         discovery_response = Mock()
@@ -402,11 +404,10 @@ def test_multiple_logins_same_user(mock_post, mock_get, sso_client):
         # First login
         response1 = sso_client.get('/login/google/callback?code=dummy_code1')
         assert response1.status_code == HTTPStatus.FOUND
-        
-        # Logout
+
         with patch('app.logout_user'):
             sso_client.get('/logout')
-        
+
         # Second login
         response2 = sso_client.get('/login/google/callback?code=dummy_code2')
         assert response2.status_code == HTTPStatus.FOUND
