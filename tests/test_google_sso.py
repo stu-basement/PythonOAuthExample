@@ -237,6 +237,7 @@ def test_google_callback_missing_email(mock_post, mock_get, sso_client):
             # Userinfo request - missing email
             mock_response.json = lambda: {
                 "sub": "12345",
+                "provider": "GOOGLE",
                 "given_name": "Test User",
                 "picture": "https://example.com/pic.jpg"
             }
