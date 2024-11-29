@@ -236,7 +236,8 @@ def map_oauth_user_info(provider: AuthProvider, user_info: dict) -> dict:
             "email": user_info["email"],
             "picture": user_info.get("picture")
         }
-    elif provider == AuthProvider.META:
+
+    if provider == AuthProvider.META:
         return {
             "id": user_info["id"],
             "name": user_info.get("name"),
@@ -366,7 +367,7 @@ def get_provider_cfg(provider: AuthProvider) -> Optional[dict]:
     """Fetch provider configuration with caching."""
     if provider == AuthProvider.EMAIL:
         return None # TBD
-    
+
     if provider == AuthProvider.META:
         return {
             "authorization_endpoint": "https://www.facebook.com/v18.0/dialog/oauth",

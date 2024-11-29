@@ -3,9 +3,9 @@ from http import HTTPStatus
 
 import os
 import pytest
+from flask_login import LoginManager
 
 from app import create_app, AuthProvider
-from flask_login import LoginManager
 
 @pytest.fixture(name="sso_client")
 def fixture_sso_client(sso_app):
@@ -36,7 +36,7 @@ def fixture_sso_app():
     # Set up login manager for testing
     login_manager = LoginManager()
     login_manager.init_app(sso_app)
-    
+
     @login_manager.user_loader
     def load_user(user_id):
         return Mock(
@@ -416,8 +416,8 @@ def test_successful_logout(mock_logout, sso_client):
     """Test successful logout for logged-in user."""
     with sso_client.session_transaction() as sess:
         sess['_user_id'] = "12345"  # Set Flask-Login session
-        
+
     response = sso_client.get('/logout')
-    
+
     assert response.status_code == HTTPStatus.FOUND
     assert mock_logout.called
